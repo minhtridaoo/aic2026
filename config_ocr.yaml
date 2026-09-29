@@ -1,0 +1,15 @@
+extends: config.example.yaml
+offline:
+  btc_data_root: 'D:\COMP\AIC2026\data cuộc thi\aic2026_data_nhe'
+  image_feature_root: 'D:\COMP\AIC2026\data cuộc thi\aic2026_siglip2_so400m'
+retrieval:
+  hop_nhat:
+    phu:
+      - image_feature_root: 'D:\COMP\AIC2026\data cuộc thi\aic2026_siglip2'
+  kenh_chu:
+    bat: true
+    kieu: fts
+    duong_dan: 'C:\Users\ADMIN\Downloads\archive (1)\aic2026_kis_slice3\stage11\artifacts\ocr_fts.sqlite'
+    bang: OCR_ALL
+    trong_so: 2.0
+    pool: 300

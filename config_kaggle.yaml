@@ -1,0 +1,24 @@
+extends: config.example.yaml
+offline:
+  btc_data_root: /kaggle/input/datasets/ojanek/aic2026-data-nhe/aic2026_data_nhe
+  image_feature_root: /kaggle/input/datasets/ojanek/aic2026-siglip2-so400m/aic2026_siglip2_so400m
+retrieval:
+  hop_nhat:
+    phu:
+    - image_feature_root: /kaggle/input/datasets/ojanek/aic2026-siglip2/aic2026_siglip2
+qa:
+  image_roots:
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L23/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L25/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L22/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L26_b/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L29/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L26_c/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L28/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L26_a/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L26_e/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L26_d/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L21/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L24/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L27/keyframes
+  - /kaggle/input/datasets/nguyenminhtric/data-batch-1-aic/Keyframes_L30/keyframes

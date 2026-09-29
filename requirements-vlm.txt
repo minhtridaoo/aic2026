@@ -1,0 +1,8 @@
+google-genai>=2.3.0
+# Cloudflare Workers AI (dự phòng) chỉ dùng REST qua urllib — KHÔNG cần SDK nào.
+# Grok/xai-sdk: đã bỏ hẳn 16/08.
+# Anthropic remains an optional paid/manual fallback.
+anthropic
+transformers
+torch
+sentencepiece

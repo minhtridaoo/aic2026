@@ -1,0 +1,16 @@
+# Core skeleton runs on the Python standard library only — nothing required here
+# to run demo.py / run_benchmark.py / the tests.
+#
+# Real components attach at the marked PLUG POINTS. Suggested (verify versions):
+#   pytest                 # test runner (dev)
+#   pyyaml                 # config loader (when wired)
+#   numpy                  # faster vector math
+#   faiss-cpu | pymilvus   # ANN vector store  (stores.VectorStore)
+#   elasticsearch          # OCR/ASR full-text  (stores.TextStore)
+#   pyvi | underthesea     # Vietnamese word segmentation (providers.tokenize)
+#   open_clip_torch/torch  # SigLIP2 / BEiT3 encoder (providers.VisualEncoder)
+#   openai | google-genai  # cloud LLM providers (providers.build_llm)
+#   anthropic              # provider VLM qua API (ANTHROPIC_API_KEY)
+#   openai-whisper         # ASR
+#   vietocr | paddleocr    # OCR
+pytest

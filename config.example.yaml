@@ -1,0 +1,368 @@
+# AIC2026 rebuild config. Do not hard-code Kaggle mounts in source code.
+#
+# ĐÂY LÀ CẤU HÌNH CHUẨN và nó ĐƯỢC ĐỌC THẬT kể từ 2026-08-16 (việc 1.5):
+# `aic2026/config.py` dựng Pipeline từ file này, `nop_bai.py` nộp bài qua đó.
+# Đường dẫn riêng của từng máy để ở `config.yaml` (`extends: config.example.yaml`)
+# — đừng sao chép cả file này, sao chép là cách sai lệch cấu hình quay lại.
+
+offline:
+  raw_video_root: null
+  # Bundle nhẹ 179 MB của BTC (map-keyframes + media-info + clip-features).
+  # -> kaggle_lay_data_nhe.py. Đặt đường dẫn máy này trong config.yaml.
+  btc_data_root: null
+  # Thư mục vector ảnh TỰ ENCODE (1 file .npy mỗi video), BẮT BUỘC khi
+  # encoder.provider = siglip2. Phải là thư mục RIÊNG, không giải nén lẫn vào
+  # btc_data_root: `dataset._thay_feature` sẽ trộn hai không gian vector.
+  image_feature_root: null
+  manifest_dir: data/canonical
+  vector_bundle_dir: data/vector_bundle
+  keep_btc_keyframes: true
+
+encoder:
+  # siglip2 = đường CHÍNH kể từ 2026-08-12. Đo ghép cặp trên dev set 120 câu:
+  # 0.2950 so với 0.1867 của CLIP BTC cấp (+0.1083 ± 0.0313, tức 3.5·SE), hạng
+  # trung vị của keyframe đúng 246 -> 119. Xem docstring SigLIP2TextEncoder.
+  #
+  # Đổi lại: cần bộ vector ảnh 260 MB TỰ ENCODE (kaggle_encode_siglip2.py), không
+  # còn dùng `clip-features-32` BTC cấp sẵn. `clip` vẫn giữ để so sánh.
+  provider: siglip2       # siglip2 | clip | mclip | hash (stub, KHÔNG có nghĩa ngữ nghĩa)
+  # so400m-384 đã đo KIS 0.3400, cao hơn base-224 0.2950; vector 1152 chiều.
+  cache_path: dev_set/query_vectors_siglip2_so400m.npz
+  model_id: google/siglip2-so400m-patch14-384   # phải khớp MODEL_ID lúc encode ảnh
+  live: true
+  dim: 256                # chỉ dùng cho provider `hash`
+  # Chỉ dùng cho đường `clip`: text tower đa ngữ mCLIP cho câu tiếng Việt.
+  # SigLIP2 vốn đa ngữ nên đường siglip2 không đọc khoá này.
+  vietnamese_cache_path: dev_set/query_mclip_vi.npz
+
+llm:
+  # Một provider chính + failover TUẦN TỰ. CHỐT 2026-08-16 theo lựa chọn vận hành:
+  #   Gemini = chính · GroqCloud = dự phòng 1 · Cloudflare = dự phòng 2.
+  # GroqCloud KHÁC Grok/xAI; Grok vẫn đã bỏ hẳn.
+  # Claude giữ lại nhưng TẮT: nó là đường trả phí, chỉ bật khi thật sự cần.
+  # Không gửi cùng một ảnh cho nhiều API — failover là TUẦN TỰ, không song song.
+  # Google dùng Gen AI Interactions native; key chỉ đọc từ biến môi trường.
+  provider: failover_vlm
+  primary:
+    enabled: true
+    provider: gemini_vlm
+    model: gemini-3.6-flash
+    cache_path: out/vlm_qa_cache_gemini_gemini-3.6-flash.json
+    max_tokens: 64
+    # ⚠ PHẢI đi cùng batch_max_images. Đo thật 16/08 (việc 2.2): batch 10 ảnh mất
+    # **22,8 giây** cho 1 request. Giá trị cũ là 10 giây -> Gemini LUÔN quá hạn,
+    # failover trả lời bằng Cloudflare (0.1200) mà đáp án không có dấu hiệu gì để
+    # nhận ra. 45 giây ≈ 2× số đo, đủ dư cho mạng Kaggle chậm hơn.
+    # Đánh đổi: nếu Gemini chết thật thì mỗi câu QA chờ 45s trước khi hạ xuống
+    # Cloudflare. Chấp nhận được vì đề chỉ có ít câu QA.
+    timeout_seconds: 45
+    # Số THẬT đọc từ dashboard ai.dev/rate-limit ngày 19/08 cho gemini-3.6-flash
+    # free tier:  RPM 5 · TPM 250K · **RPD 20**.
+    # 13s ≈ 4,6 request/phút, nằm dưới trần RPM 5. Giá trị cũ 4s (=15/phút) là
+    # SAI gấp ba: nó tự tạo 429 ngay trong bộ 30 câu.
+    # `max_retries: 0` là CỐ Ý. Thử lại CÙNG model khi 429 vì cạn RPD là chờ
+    # vô ích (retry-after có khi 60s+) rồi vẫn hỏng. Nhịp 13s đã lo phần RPM,
+    # nên phần 429 còn lại gần như chắc chắn là RPD -> nhảy sang model KHÁC
+    # (túi quota khác) đáng giá hơn nhiều so với chờ.
+    max_retries: 0
+    min_interval_seconds: 13
+    # ⚠ RPD 20 mới là thứ giết mình, và KHÔNG có cách nào lách bằng nhịp độ:
+    # cả bộ 30 câu QA = 30 request > 20. Ba đối sách, theo thứ tự ưu tiên:
+    #   1. GIỮ CACHE `out/` giữa các phiên Kaggle (câu đã hỏi không tốn lần hai)
+    #   2. Hạ xuống model Gemini khác — quota đếm RIÊNG TỪNG MODEL (xem fallbacks)
+    #   3. Bật thanh toán + đặt trần chi tiêu nhỏ (chắc chắn nhất cho ngày thi)
+    # Đã nghiệm thu thật 16/08: 30 ảnh = 3 native requests, QA 0.2067 ± 0.0618.
+    # Pipeline top-10 vì vậy dùng đúng một Gemini Interaction mỗi câu QA.
+    batch_max_images: 10
+  fallbacks:
+    # ── THANG MODEL GEMINI: mỗi bậc là một TÚI QUOTA RIÊNG ─────────────────
+    # Free tier đếm quota theo TỪNG MODEL (429 ghi rõ "limit: 20, model:
+    # gemini-3.6-flash"), nên xếp chồng nhiều model Gemini = cộng dồn quota mà
+    # vẫn ở trong nhà Google: cùng SDK, cùng khoá, cùng gộp 10 ảnh/request.
+    #
+    # Số THẬT từ dashboard 19/08 (tên model lấy bằng `client.models.list()`):
+    #   bậc FLASH — chất lượng, RPM 5 · RPD 20 mỗi model
+    #     gemini-3.7-flash · gemini-3.6-flash · gemini-3.5-flash
+    #   bậc LITE  — số lượng, RPM 15 · **RPD 500** mỗi model
+    #     gemini-3.5-flash-lite · gemini-3.1-flash-lite
+    # Cộng lại: ~60 request/ngày chất lượng cao, rồi ~1000 request/ngày bậc lite.
+    #
+    # ⚠ `gemini-2.0-flash` / `2.0-flash-lite` KHÔNG có ở đây: dashboard báo 0/0,
+    # tài khoản này không có quota cho chúng. Đừng thêm lại.
+    # ⚠ CHƯA ĐO chất lượng QA của mọi bậc trừ 3.6-flash (0.2067). Thang này để
+    # KHỎI CHẾT GIỮA CHỪNG, không phải để thay đường thi. Đo được thì ghi số vào.
+    - enabled: true
+      provider: gemini_vlm
+      model: gemini-3.7-flash
+      cache_path: out/vlm_qa_cache_gemini_gemini-3.7-flash.json
+      max_tokens: 64
+      timeout_seconds: 45
+      max_retries: 0
+      min_interval_seconds: 13
+      batch_max_images: 10
+    - enabled: true
+      provider: gemini_vlm
+      model: gemini-3.5-flash
+      cache_path: out/vlm_qa_cache_gemini_gemini-3.5-flash.json
+      max_tokens: 64
+      timeout_seconds: 45
+      max_retries: 0
+      min_interval_seconds: 13
+      batch_max_images: 10
+    - enabled: true
+      provider: gemini_vlm
+      model: gemini-3.5-flash-lite
+      cache_path: out/vlm_qa_cache_gemini_gemini-3.5-flash-lite.json
+      max_tokens: 64
+      timeout_seconds: 45
+      max_retries: 0
+      min_interval_seconds: 5      # RPM 15 -> 5s là 12/phút, còn dư biên
+      batch_max_images: 10
+    - enabled: true
+      provider: gemini_vlm
+      model: gemini-3.1-flash-lite
+      cache_path: out/vlm_qa_cache_gemini_gemini-3.1-flash-lite.json
+      max_tokens: 64
+      timeout_seconds: 45
+      max_retries: 0
+      min_interval_seconds: 5
+      batch_max_images: 10
+    # ── Rồi mới ra khỏi nhà Google ─────────────────────────────────────────
+    # TẮT cho đường QA ẢNH, và đây là quyết định có số đỡ lưng: Groq KHÔNG gộp
+    # lô (chỉ Gemini có `batch_max_images`), nên một câu QA top-10 nổ thành 10
+    # request rời ~26K token/phút — vượt xa trần free tier 8K TPM. Bật lên chỉ
+    # tổ mất thời gian chờ rồi vẫn rơi xuống Cloudflare.
+    # Groq vẫn hữu ích, nhưng ở đường CHỮ: `GroqVLMProvider.tra_loi_chu()` dùng
+    # cho viết lại truy vấn (~1K token/lô, thoải mái trong 8K TPM).
+    - enabled: false
+      provider: groq_vlm
+      model: qwen/qwen3.6-27b
+      cache_path: out/vlm_qa_cache_groq_qwen3.6-27b.json
+      max_tokens: 64
+      timeout_seconds: 45
+    # BẬT theo quyết định 16/08: Workers AI Vision là đường dự phòng free-tier khi
+    # Gemini lỗi/cạn quota. Đo thật 16/08: QA 0.1200 (16/30) — kém Gemini 0.2067
+    # (-0.0867 ± 0.0403), nhưng vẫn hơn QA zero-shot 0.1067, nên bật là đúng:
+    # thứ tự tuần tự nghĩa là nó CHỈ được gọi khi Gemini đã ném lỗi.
+    # Cần CẢ HAI biến môi trường: CLOUDFLARE_API_TOKEN và CLOUDFLARE_ACCOUNT_ID.
+    - enabled: true
+      provider: cloudflare_vlm
+      model: "@cf/meta/llama-3.2-11b-vision-instruct"
+      cache_path: out/vlm_qa_cache_cloudflare_llama-3.2-11b-vision.json
+      max_tokens: 64
+      timeout_seconds: 45
+    # Optional TRẢ PHÍ, giữ tắt: chỉ bật khi cả Gemini và Cloudflare đều chết mà
+    # vẫn cần chất lượng cao. Không phải phương án mặc định.
+    - enabled: false
+      provider: anthropic_vlm
+      model: claude-haiku-4-5
+      cache_path: out/vlm_qa_cache_anthropic_claude-haiku-4-5.json
+      max_tokens: 64
+      timeout_seconds: 30
+      max_retries: 0
+    # Grok/xAI: ĐÃ BỎ HẲN 16/08 (quyết định của người dùng). Không còn provider,
+    # không còn CLI, không còn trong chuỗi failover. Đừng thêm lại mà không đo.
+
+qa:
+  output_language: vi
+  vlm_fallback_to_zero_shot: true  # cloud VLM đều lỗi thì trả QA cheap
+  vlm_top_n: 10  # VLM cho 10 dòng đầu (batch = 1 request/câu với batch_max_images 10)
+  # 90 dòng ĐUÔI trả lời bằng gì. Đo ghép cặp 16/08, 30 câu dev, 0 request thêm:
+  #   cheap = ClipZeroShotQA cho đuôi   0.1933 ± 0.0625   (hành vi cũ)
+  #   vlm   = lan đáp án VLM ra 100 dòng 0.2067 ± 0.0618   delta +0.0133 ± 0.0093
+  # Chọn `vlm` dù mới 1,4·SE: không phải núm được fit — đáp án VLM đúng 26/30 còn
+  # đáp án rẻ ~13/30, và R-Score chỉ cộng cho dòng trong cửa sổ đúng (một video),
+  # nên dùng chung đáp án tốt nhất là tối ưu. Đổi thành `cheap` để về hành vi cũ.
+  tail_answer: vlm
+  # 6 câu đếm hiện tại: cheap và VLM cùng đúng 5/6, nên không đốt API.
+  # color/open mới gọi VLM; đặt [color, count, open] nếu muốn thử VLM toàn bộ.
+  vlm_question_types: [color, open]
+  # Ảnh dev chỉ đủ đo 30 câu. Ngày thi phải gắn root corpus đầy đủ (~28.66 GiB)
+  # hoặc chạy tầng trả lời trên Kaggle; thiếu ảnh sẽ NÉM LỖI, không trả rỗng.
+  dev_image_dir: dev_set/anh
+  image_roots: []         # vd /kaggle/input/aic2026-keyframes/keyframes
+  # opus_mt  = Helsinki-NLP/opus-mt-en-vi cho các đáp án ngoài bảng tay (mặc định)
+  # bang_tay = CHỈ bảng tay màu/số trong core.qa, không nạp model dịch. Rẻ và
+  #            chạy offline, nhưng câu MỞ giữ nguyên tiếng Anh.
+  answer_translation: opus_mt
+  # Ai sinh ĐÁP ÁN ỨNG VIÊN cho QA zero-shot (phần thuần chữ, chưa xét ảnh):
+  #   auto = theo biến môi trường — có ANTHROPIC_API_KEY thì gọi Claude (tốn
+  #          credit, ứng viên nằm ngoài bảng tay), không có thì dùng luật.
+  #          Mọi số QA cheap đã đo đều đo ở chế độ này, nên nó là mặc định.
+  #   luat = chỉ bảng luật trong core.qa. Offline, tái lập được, không tốn API.
+  #   llm  = luôn gọi Claude.
+  # CHỐT `luat` 2026-08-17. `auto` là đúng chủng loại lỗi 1.5: nó đọc BIẾN MÔI
+  # TRƯỜNG, nên cùng một commit cho hai kết quả khác nhau tuỳ máy có
+  # ANTHROPIC_API_KEY hay không — máy dev có, Kaggle không. Đã quan sát thật:
+  # hai lần chạy cùng code ra hai điểm QA khác nhau. Môi trường thi là Kaggle
+  # (không có khoá), nên chốt `luat` để số đo và số nộp bài là một.
+  answer_candidates: luat
+
+
+# Tầng TIÊU (optimize/). CHỐT TẮT 2026-08-13: delta ghép cặp +0.0067 ± 0.0047
+# trên dev set 170 câu, chưa vượt 2·SE nên chưa phân biệt được với nhiễu.
+portfolio:
+  enabled: false
+  calibrator: rank        # rank | none (chỉ có nghĩa khi enabled: true)
+
+# ĐỀ THI. Đề của BTC có cả bản tiếng Việt lẫn tiếng Anh; khoá này nói bản nào
+# được dùng để TRUY HỒI. Không phải khoá trang trí — đo trên 120 câu KIS,
+# SigLIP2 base-224, đổi đúng một biến là trường văn bản:
+#   en  0.2950   R@1 8,8%   R@100 38,2%     <- mọi số đã chốt của hệ thống
+#   vi  0.1750   R@1 2,4%   R@100 26,5%     <- mất 41%
+# Hệ thống KHÔNG tự phát hiện: câu tiếng Việt được ChonEncoderTheoNgonNgu định
+# tuyến về chính encoder đang dùng, chạy trơn tru, chỉ có điểm là thấp. Nên bộ
+# đọc đề (core/de_bai.py) chọn theo khoá này và IN RA đã dùng bản nào cho từng
+# câu — đừng bỏ phần in ra đó.
+#   en      = ưu tiên bản tiếng Anh (MẶC ĐỊNH)
+#   vi      = ưu tiên bản tiếng Việt. Chỉ chọn sau khi đo lại ở so400m.
+#   tu_dong = lấy trường đầu tiên tìm được, KHÔNG xét ngôn ngữ. Chỉ để gỡ rối.
+truy_van:
+  ngon_ngu: en
+  # BTC phát đề .txt TIẾNG VIỆT, không có bản tiếng Anh. SigLIP2 học trên
+  # alt-text nên nó thưởng lối viết CHÚ THÍCH ẢNH tiếng Anh, không thưởng bản
+  # dịch đúng ngữ pháp — dịch máy opus-mt đo ra -0.0400, tức làm HỎNG.
+  # Cho LLM viết lại thành chú thích ảnh thì khác hẳn. Đo Kaggle 19/08,
+  # 120 câu KIS, so400m + hợp nhất (đúng cấu hình thi):
+  #     VI thô 0.2883  ->  LLM viết lại 0.3450   Δ +0.0567 ± 0.0209 (vượt 2·SE)
+  #     bản người gõ tay 0.3750 (lúc thi KHÔNG có)
+  # R@100 của bản viết lại = 57,5%, BẰNG ĐÚNG bản người gõ tay.
+  # ⚠ CHỈ áp cho câu đề không có bản tiếng Anh. Câu nào đã có bản người viết
+  #   thì để nguyên — 0.3750 > 0.3450.
+  # ⚠ `so_ban: 3` rồi lấy bản [0] là ĐÚNG cấu hình đã đo. Trung bình cả 3 bản
+  #   đo được TỆ HƠN ở so400m (0.3233). Đừng đổi sang 1 để "tiết kiệm": đổi
+  #   số bản là đổi prompt và đổi khoá cache, số đo không còn bảo chứng.
+  # Model lite vì đây là việc CHỮ: gemini-3.5-flash-lite có RPD 500 (bậc flash
+  # chỉ 20), cả đề thi tốn vài request.
+  viet_lai:
+    enabled: true
+    provider: gemini_vlm
+    model: gemini-3.5-flash-lite
+    so_ban: 3
+    lo: 10
+    cache_path: out/viet_lai_truy_van.json
+
+retrieval:
+  fusion: rrf             # rrf (default) | borda | weighted_sum (debug only)
+  rrf_k: 60
+  top_k: 100
+  # Chiếu bỏ hướng trung bình của kho trước khi so cosine (modality gap của CLIP).
+  # Đo trên dev set thật: có lợi, và `score_many` dùng đúng phép biến đổi này.
+  khu_modality_gap: true
+  # HỢP NHẤT NHIỀU ENCODER bằng RRF có trọng số trên HẠNG (việc 4.4a, 16/08).
+  # Đo trên 120 câu KIS, dựng dòng y hệt đường thi:
+  #   so400m một mình            0.3400  R@1  9,2%
+  #   so400m×2 + base-224        0.3750  R@1 15,8%   Δ +0.0350 ± 0.0127 (2,8·SE)
+  #   kiểm chứng chia theo video: nửa A +0.0328 ± 0.0178 · nửa B +0.0377 ± 0.0179
+  # Cùng họ trọng số đều dương (×1 +0.0150 · ×2 +0.0350 · ×3 +0.0267) nên ×2 không
+  # phải đỉnh nhọn. Thêm clip BTC vào KHÔNG có lợi (+0.0100, kém hơn base).
+  # Giá phải trả: thêm ~545 MB RAM và ~5s nạp cho bộ vector base-224.
+  # Đo lại bằng: python thu_nghiem_hop_nhat_encoder.py
+  hop_nhat:
+    enabled: true
+    pool: 500             # độ sâu lấy từ mỗi encoder trước khi fuse
+    rrf_k: 60
+    trong_so_chinh: 2     # so400m nói to gấp đôi base
+    phu:
+      - enabled: true
+        provider: siglip2
+        model_id: google/siglip2-base-patch16-224
+        cache_path: dev_set/query_vectors_siglip2.npz
+        # Đường dẫn máy -> đặt trong config.yaml, không phải ở đây.
+        image_feature_root: null
+        trong_so: 1
+  # KÊNH CHỮ OCR/ASR theo KHOẢNG SHOT (2026-08-21). Bộ dữ liệu BTC không cấp
+  # OCR/ASR, nhưng đội bạn có `nguyenminhtric/20-note` (Stage20 shadow evidence
+  # pack) với đúng hai cột `ocr_text_compact` + `asr_text_compact` cho ~18.660
+  # khoảng shot. Hai kênh `ocr`/`asr` trong `MultiChannelRetriever` vốn đã được
+  # RRF nối từ đầu và bỏ trống suốt — đây là thứ lấp chúng.
+  #
+  # Vì sao đáng: soi bài nộp vòng thử nghiệm (5,6/12), 6 câu sai hẳn video
+  # (1, 2, 8, 14, 21, 23) đều là mẩu tin trong bản tin *60 Giây*, nơi phát
+  # thanh viên NÓI ra đúng từ khoá ("đàn hổ con", "Lausanne", "cá mập") mà
+  # encoder ảnh không thấy. Cả 3 câu QA cũng là câu ĐỌC CHỮ.
+  #
+  # 🔴 TẮT THEO MẶC ĐỊNH và phải giữ như vậy cho tới khi có số trên dev set.
+  # Kênh chữ ĐÃ TỪNG làm hỏng điểm một lần: bật metadata vào kênh chữ ngày
+  # 08/08 cho Δ = −0.0300 ± 0.0104. Lần đó hỏng vì text bị nhân bản lên mức
+  # keyframe và RRF cấp cho nó trọng số ngang kênh visual. Bản này chấm ở mức
+  # KHOẢNG và có `trong_so` đọc được — nhưng "đã sửa đúng nguyên nhân" không
+  # phải là phép đo. Đo bằng `do_diem_thuc_te.py --kenh-chu` rồi hãy bật.
+  # 🟢 `kieu: fts` — ĐƯỜNG TỐT NHẤT, đo 21/08. Dùng `ocr_fts.sqlite` của
+  # Stage11 (`selaninguyen/11ntoe`): OCR cho **đúng 177.321 dòng, mỗi dòng một
+  # keyframe**, khớp 1:1 với event, kèm chỉ mục FTS5/BM25 dựng sẵn và BỎ DẤU
+  # (rất hợp OCR tiếng Việt vốn sai dấu liên tục).
+  #
+  # Thứ tự `frame_row` đã kiểm chứng CHÉO bằng `kiem_thu_tu_ocr.py`: đồng hồ
+  # trên màn hình bản tin (OCR đọc) khớp `pts_time` của BTC với lệch trung vị
+  # **0,20 giây** trên 8 video / ~2.000 khung. Không phải giả định.
+  #
+  # TRỌNG SỐ 2.0 LÀ SỐ ĐO ĐƯỢC, KHÔNG PHẢI CHỌN BỪA. Dò trên 14 câu của bộ đề
+  # thử nghiệm (`do_trong_so_ocr.py`) — 7 câu OCR mạnh + 7 câu tầng ảnh vốn đã
+  # đúng, để thấy CẢ mặt lợi lẫn mặt hại:
+  #
+  #     w      OCR-mạnh   đã-đúng   tổng
+  #     0.0      4.8        7.0     11.8    <- nền
+  #     1.0      5.2        7.0     12.2
+  #     2.0      6.2        7.0     13.2    <- chọn
+  #     3.0      7.0        5.8     12.8
+  #     4.0      7.0        4.6     11.6
+  #     6.0      7.0        4.4     11.4
+  #
+  # Hình dạng này khớp đúng phép toán RRF: `w/(60+hạng)`. Ở w = 2.0 = đúng
+  # `fuse_trong_so_chinh`, OCR hạng 1 ngang encoder hạng 1 — nên khung OCR tìm
+  # ra chen được lên đầu mà KHÔNG hất văng khung đúng của tầng ảnh. Trên 2.0 là
+  # cho OCR quyền phủ quyết, và bảng trên cho thấy giá phải trả.
+  #
+  # ⚠ Kênh chữ ĐÃ TỪNG làm hỏng điểm (bật metadata 08/08: −0.0300 ± 0.0104).
+  # Lần đó hỏng vì text bị nhân bản lên mức keyframe và RRF cấp trọng số ngang
+  # kênh visual một cách ngầm. Ở đây không nhân bản (1 dòng = 1 keyframe) và
+  # trọng số là con số đo được.
+  kenh_chu:
+    bat: false
+    kieu: khoang          # fts (Stage11, per-keyframe) | khoang (Stage20, per-shot)
+    duong_dan: null       # fts: .../ocr_fts.sqlite · khoang: .../shadow_evidence_pack_registry.parquet
+    bang: OCR_ALL         # chỉ `kieu: fts` — OCR_ALL | OCR_S05 | OCR_S08
+    trong_so: 2.0
+    pool: 300             # chỉ `kieu: fts`
+    bo_so_ngan: true      # bỏ token số 1-2 chữ số (đồng hồ bản tin, số hiệu kênh)
+    # --- chỉ `kieu: khoang` ---
+    pool_khoang: 150
+    toi_da_event_moi_khoang: 30
+    nguong_diem: 0.15     # dưới ngưỡng = trùng vài từ chức năng, không phải bằng chứng
+    dung_ocr: true
+    dung_asr: true
+
+  weights:                # only used when fusion == weighted_sum
+    visual: 1.0
+    ocr: 1.0
+    asr: 1.0
+  pool_per_query: 300
+  candidate_videos: 20
+
+online:
+  profile: auto
+  max_submission_rows: 100
+  gate:
+    min_relative_margin: 0.08
+    min_channel_agreement: 2
+    min_neighbor_support: 0.25
+  escalation:
+    available: false          # gate records recommendation only today
+    dense_decode: false       # not implemented/benchmarked yet
+    vlm_verify: false         # not implemented/benchmarked yet
+    max_candidate_videos: 20
+
+# Temporal DP tunables. UNVERIFIED defaults — tune on real past-year queries with
+# a VIDEO-level split, pick a stable plateau (see temporal_dp docstring).
+temporal_dp:
+  lam: 0.05
+  gap_max: 120.0
+  penalty_miss: 0.35
+  modality_confidence_threshold: 0.6
+  miss_factor: 0.5
+
+# Official scorer. Re-confirm k-thresholds on the Codabench Evaluation tab when
+# the 2026 preliminary package opens (format is identical to 2025, formula TBC).
+scoring:
+  ks: [1, 5, 20, 50, 100]

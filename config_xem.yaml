@@ -1,0 +1,86 @@
+# CẤU HÌNH CHO `may_xem.py` — giống hệt cấu hình thi, THÊM đường ảnh.
+#
+# Tách khỏi `config_ocr_asr.yaml` (cấu hình đã dùng nộp đợt 1) chứ không sửa
+# thẳng vào đó, vì `qa.image_roots` cũng là đường mà tầng QA VLM dùng để đọc
+# ảnh. Trỏ nó vào một corpus THIẾU (29/873 video) trong file cấu hình thi là
+# đúng chủng loại lỗi câm mà repo này chống suốt tháng 8: bài nộp vẫn hợp lệ,
+# VLM vẫn trả lời, chỉ là trả lời trên những ảnh nó tìm được.
+#
+# ✅ 28/08: bộ keyframe ĐẦY ĐỦ đã về đĩa (873/873 video). Cấu trúc BTC giải nén
+# ra là `<archive>/Keyframes_L2x[_a..e]/keyframes/<VIDEO>/001.jpg`, tức thư mục
+# `<VIDEO>/` nằm dưới MỘT tầng `keyframes` của TỪNG gói — nên `image_roots` phải
+# liệt kê 14 gói, không phải một thư mục mẹ (`EventImageResolver` chỉ dò
+# `<root>/<VIDEO>/`, `<root>/<3 chữ đầu>/<VIDEO>/` và `<root>/`, không quét sâu).
+# Nghiệm thu: `python -X utf8 kiem_resolver_anh.py --config config_xem.yaml`
+# — phép mạnh nhất là so BYTE ảnh dev set với ảnh corpus cùng `(video, n)`,
+# bắt được cả lệch một đơn vị trong cách đánh số.
+extends: config_ocr_asr.yaml
+
+# 🔴🔴 SỬA 28/08 — ĐẢO CHUỖI QA VLM. `gemini-3.6-flash` BỊA ĐÁP ÁN, KHÔNG ĐỌC
+# ẢNH. Bằng chứng đo trên chính đề đợt 1 chiều nay, đúng chữ ký đã bắt 20/08
+# (một đáp án dùng cho nhiều VIDEO khác nhau):
+#
+#   câu "con số cuối trên cân"  -> `300`         cho 10/10 keyframe, 8 video khác nhau
+#   câu "sạt lở đường đèo"      -> `Đèo Bảo Lộc` cho 10/10 keyframe, 6 video khác nhau
+#
+# `Đèo Bảo Lộc` là đèo sạt lở nổi tiếng nhất — đúng thứ một model CHỈ ĐỌC CHỮ
+# sẽ đoán ra (ghim đợt 1 cho câu này là "Đèo Tà Púa", một video khác).
+#
+# Ngược lại `gemini-3.5-flash-lite` ĐANG ĐỌC THẬT, cùng phép đo:
+#   câu "bao nhiêu vị trí động đất cấp 4" -> L21_V010: 5,5,5,5 · L21_V006: 4,4,4
+#                                            L21_V007: 2 · L25_V076: 10
+#   = khác nhau theo VIDEO, nhất quán TRONG từng video.
+#
+# Nên bậc LITE lên đầu. Nó còn giải quyết luôn chuyện quota: lite là RPM 15 /
+# **RPD 500**, còn cả bậc flash (3.7/3.6/3.5) chỉ **RPD 20** — ba tiếng thi mà
+# đứng đầu chuỗi bằng RPD 20 là tự đặt vách quota vào giữa buổi.
+#
+# `_gop_sau` gộp list-of-mapping THEO CHỈ SỐ nên lớp phủ dưới đây chỉ đổi model
+# + cache của primary và fallback[0..1]; các bậc sau giữ nguyên (thành bậc lặp
+# lại, vô hại vì dùng chung cache). Chuỗi sau khi phủ:
+#   3.5-flash-lite -> 3.1-flash-lite -> 3.7-flash -> (lặp lite) -> cloudflare
+llm:
+  primary:
+    model: gemini-3.5-flash-lite
+    cache_path: out/vlm_qa_cache_gemini_gemini-3.5-flash-lite.json
+    min_interval_seconds: 5          # RPM 15 -> 12/phút, còn dư biên
+  fallbacks:
+    - model: gemini-3.1-flash-lite   # chỉ số 0 — thay 3.7-flash
+      cache_path: out/vlm_qa_cache_gemini_gemini-3.1-flash-lite.json
+      min_interval_seconds: 5
+    - model: gemini-3.7-flash        # chỉ số 1 — thay 3.5-flash. 20/08 đo được
+      cache_path: out/vlm_qa_cache_gemini_gemini-3.7-flash.json   # là nó ĐỌC thật,
+      min_interval_seconds: 13       # nhưng RPD 20 nên chỉ để làm lưới.
+
+qa:
+  # 🔴 SỬA 28/08 — bật `count`. Đo trên chính đề đợt 1: 3/4 câu QA là câu ĐẾM
+  # SỐ ("con số hiển thị trên cân", "con số trên biển báo", "có bao nhiêu vị
+  # trí động đất cấp độ 4") mà `[color, open]` KHÔNG cho câu `count` đi qua
+  # VLM (`pipeline.py:334`), nên cả ba rơi về `ClipZeroShotQA` và nộp
+  # `1` / `trắng` / `vàng`. Một MÀU trả cho câu hỏi CON SỐ là 0 điểm chắc
+  # chắn, nên đường VLM không thể tệ hơn — đây là đổi có kỳ vọng không âm.
+  #
+  # Ghi chú cũ ở `config.example.yaml:177` ("6 câu đếm: cheap và VLM cùng đúng
+  # 5/6, không đốt API") vẫn đúng với DEV SET, nơi mô tả cảnh không chứa chữ
+  # "màu" nên bộ luật trả về đúng nhóm SỐ. Nó không mô tả được đề BTC. Đây
+  # đúng bài học 21/08: tính năng phụ thuộc VĂN BẢN thì tin leaderboard.
+  #
+  # ⚠ CHỈ bật ở file này vì file này bảo đảm có `image_roots`: nhánh VLM ném
+  # RuntimeError NGOÀI khối try khi `image_resolver is None`.
+  vlm_question_types: [color, count, open]
+
+  image_roots:
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L21\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L22\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L23\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L24\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L25\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L26_a\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L26_b\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L26_c\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L26_d\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L26_e\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L27\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L28\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L29\keyframes'
+    - 'D:\COMP\AIC2026\data cuộc thi\keyframes\archive (10)\Keyframes_L30\keyframes'

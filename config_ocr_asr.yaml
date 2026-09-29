@@ -1,0 +1,67 @@
+# CẤU HÌNH THI 21/08 — encoder ảnh + KÊNH OCR + KÊNH ASR.
+#
+# Hai kênh chữ vì OCR và ASR là hai loại bằng chứng khác hẳn nhau:
+#   OCR = chữ IN TRÊN MÀN HÌNH (tên riêng, tiêu đề tin, băng-rôn, tờ công thức)
+#         -> chính xác, ngắn, per-KEYFRAME, khớp 1:1 với event.
+#   ASR = LỜI NÓI (Whisper) -> giàu hơn nhiều (759 ký tự/khoảng) nhưng nhiễu
+#         hơn và chỉ định vị tới mức KHOẢNG SHOT.
+# Ép chung một trọng số là bỏ mất phần lớn giá trị của cái chính xác hơn.
+#
+# TRỌNG SỐ ĐÃ DÒ (`do_trong_so_ocr.py`, 14 câu: 7 câu OCR mạnh + 7 câu tầng ảnh
+# vốn đã đúng, để thấy CẢ mặt lợi lẫn mặt hại). Cột là HỆ SỐ NHÂN lên bộ
+# (OCR 2.0 / ASR 1.0) dưới đây:
+#
+#     ×      OCR-mạnh   đã-đúng   tổng
+#     0        4.8        7.0     11.8   <- nền, tắt cả hai kênh
+#     0.75     5.8        7.0     12.8
+#     1.00     6.6        7.0     13.6   <- CHỌN
+#     1.25     6.8        7.0     13.8   (cao hơn 0.2 nhưng sát vách)
+#     1.50     7.0        6.0     13.0   <- vách: bắt đầu phá câu máy vốn đúng
+#
+# Chọn ×1.00 chứ không ×1.25 theo đúng nguyên tắc của repo: lấy VÙNG PHẲNG chứ
+# không lấy đỉnh nhọn. 1.25 hơn đúng 0.2/14 (một câu đổi từ hạng 10 sang 4) mà
+# nằm ngay cạnh 1.5 — nơi bốn câu tầng ảnh đang đúng bị đẩy xuống.
+#
+# ⚠ 14 câu là mẫu NHỎ, và 7 câu nhóm trái là 7 câu OCR mạnh nhất. Đây là số để
+# CHỌN GIỮA CÁC TRỌNG SỐ, không phải để hứa điểm.
+extends: config.example.yaml
+
+offline:
+  btc_data_root: 'D:\COMP\AIC2026\data cuộc thi\aic2026_data_nhe'
+  image_feature_root: 'D:\COMP\AIC2026\data cuộc thi\aic2026_siglip2_so400m'
+
+retrieval:
+  hop_nhat:
+    phu:
+      - image_feature_root: 'D:\COMP\AIC2026\data cuộc thi\aic2026_siglip2'
+
+  kenh_chu:
+    # ── OCR per-keyframe (Stage11 `selaninguyen/11ntoe`) ────────────────────
+    # 177.321 dòng khớp 1:1 với event. Thứ tự `frame_row` đã kiểm chứng chéo
+    # bằng đồng hồ trên màn hình bản tin: lệch trung vị 0,20s (kiem_thu_tu_ocr.py).
+    - ten: OCR-keyframe
+      bat: true
+      kieu: fts
+      duong_dan: 'C:\Users\ADMIN\Downloads\archive (1)\aic2026_kis_slice3\stage11\artifacts\ocr_fts.sqlite'
+      bang: OCR_ALL
+      trong_so: 2.0
+      pool: 300
+      bo_so_ngan: true
+
+    # ── ASR per-khoảng-shot (Stage20 `nguyenminhtric/20-note`) ──────────────
+    # 18.660 khoảng / 873 video · 78% có ASR · trung bình 759 ký tự.
+    # Đo được: khoảng phủ KÍN trục thời gian (100% event rơi vào một khoảng),
+    # nên `dung_sai_giay` để 0 — không cần nới, và không nới thì không có rủi
+    # ro gán lời thoại của cảnh khác.
+    # `dung_ocr: false` vì OCR đã có kênh riêng tốt hơn hẳn (per-keyframe).
+    - ten: ASR-khoang
+      bat: true
+      kieu: khoang
+      duong_dan: 'D:\COMP\AIC2026\data cuộc thi\stage20\shadow_evidence_pack_registry.csv'
+      trong_so: 1.0
+      dung_ocr: false
+      dung_asr: true
+      pool_khoang: 120
+      toi_da_event_moi_khoang: 12
+      nguong_diem: 0.15
+      dung_sai_giay: 0.0

@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.test-tmp/
+.env
+*.zip
+
+# kết quả chạy, cache: tạo lại được
+out/
+
+# data: chỉ đưa HỆ THỐNG lên, không đưa đề/đáp án/ghim/dev set/data BTC
+data/
+dev_set/
+nghiệm thu/input/
+nghiệm thu/output/
+
+# đường dẫn riêng của máy này (config.example.yaml vẫn được đưa lên)
+config.yaml
